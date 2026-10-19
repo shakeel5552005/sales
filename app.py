@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
 from pathlib import Path
 
 from utils.data_loader import load_and_prepare
@@ -48,21 +47,29 @@ html, body, [class*="css"] { font-family: 'Segoe UI', 'Inter', sans-serif; }
 .hero p { font-size: 1.1rem; opacity: 0.95; margin: 0; }
 
 /* Navbar */
-.nav-container {
-    display: flex; gap: 8px; background: #FFFFFF; padding: 10px;
-    border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.06);
-    margin-bottom: 1.5rem; flex-wrap: wrap; border: 1px solid #E8ECF4;
-}
-.nav-btn {
-    flex: 1; min-width: 110px; text-align: center; padding: 12px 14px;
-    border-radius: 12px; font-weight: 600; font-size: 0.9rem;
-    color: #4A5568; background: #F8F9FC; border: 1px solid transparent;
+div[data-testid="stHorizontalBlock"] > div > div > div > button {
+    border-radius: 12px;
+    border: 1px solid #E8ECF4;
+    background: #FFFFFF;
+    color: #4A5568;
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0.7rem 0.3rem;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
     transition: all 0.25s ease;
+    width: 100%;
 }
-.nav-btn:hover { background: #EEF1F8; transform: translateY(-2px); color: #6C5CE7; }
-.nav-btn.active {
-    background: linear-gradient(135deg, #6C5CE7, #A29BFE);
-    color: white; box-shadow: 0 6px 20px rgba(108,92,231,0.35);
+div[data-testid="stHorizontalBlock"] > div > div > div > button:hover {
+    background: #EEF1F8;
+    border-color: #A29BFE;
+    color: #6C5CE7;
+    transform: translateY(-2px);
+}
+div[data-testid="stHorizontalBlock"] > div > div > div > button[kind="primary"] {
+    background: linear-gradient(135deg, #6C5CE7, #A29BFE) !important;
+    color: white !important;
+    border-color: transparent !important;
+    box-shadow: 0 6px 20px rgba(108,92,231,0.35) !important;
 }
 
 /* Cards */
@@ -110,14 +117,6 @@ html, body, [class*="css"] { font-family: 'Segoe UI', 'Inter', sans-serif; }
 /* Tables */
 [data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; box-shadow: 0 4px 16px rgba(0,0,0,0.05); }
 
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 8px; background: #FFFFFF; padding: 8px;
-    border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.04);
-}
-.stTabs [data-baseweb="tab"] { border-radius: 8px; padding: 8px 16px; font-weight: 600; color: #4A5568; }
-.stTabs [aria-selected="true"] { background: linear-gradient(135deg, #6C5CE7, #A29BFE) !important; color: white !important; }
-
 /* Alerts */
 .stAlert { border-radius: 12px; border-left-width: 5px; }
 </style>
@@ -131,7 +130,7 @@ DEMO_FILE = Path("general_sales.csv")
 
 if not DEMO_FILE.exists():
     rng = np.random.default_rng(0)
-    n_demo = 500
+    n_demo = 1000
     demo_df = pd.DataFrame({
         "Order_ID":         [f"ORD-{i:04d}" for i in range(1, n_demo + 1)],
         "Order_Date":       pd.date_range("2023-01-01", periods=n_demo, freq="D"),
@@ -147,12 +146,9 @@ if not DEMO_FILE.exists():
         "Discount":         rng.uniform(0, 0.5, n_demo).round(2),
         "Shipping_Cost":    rng.uniform(1, 50, n_demo).round(2),
         "Region":           rng.choice(["North", "South", "East", "West"], n_demo),
-        "City":             rng.choice(
-            ["Lahore", "Karachi", "Islamabad", "Multan"], n_demo),
-        "State":            rng.choice(
-            ["Punjab", "Sindh", "Federal", "Punjab"], n_demo),
-        "Segment":          rng.choice(
-            ["Consumer", "Corporate", "Home Office"], n_demo),
+        "City":             rng.choice(["Lahore", "Karachi", "Islamabad", "Multan"], n_demo),
+        "State":            rng.choice(["Punjab", "Sindh", "Federal", "Punjab"], n_demo),
+        "Segment":          rng.choice(["Consumer", "Corporate", "Home Office"], n_demo),
     })
     demo_df["Total_Sale"] = (
         demo_df["Quantity"] * demo_df["Unit_Price"] * (1 - demo_df["Discount"])
@@ -164,22 +160,41 @@ if not DEMO_FILE.exists():
 
 
 # ============================================================
-# DATA + MODEL CACHE
+# SESSION STATE
+# ============================================================
+if "page" not in st.session_state:
+    st.session_state.page = "home"
+
+
+# ============================================================
+# PRE-LOAD DATA + PRE-TRAIN MODELS (runs ONCE, cached forever)
 # ============================================================
 @st.cache_data(show_spinner=False)
-def get_data(file_bytes):
-    df = load_and_prepare(file_bytes)
+def _load_data(file_path: str):
+    df = load_and_prepare(file_path)
     df = add_features(df)
     return df
 
 
-@st.cache_resource(show_spinner=True)
-def get_models(df):
-    return md.train_all(df)
+@st.cache_resource(show_spinner=False)
+def _train_models(df_hash: str, _df: pd.DataFrame):
+    """Trains all 4 models once and saves them to /models."""
+    results, pipes, test_set = md.train_all(_df)
+    return results, pipes, test_set
+
+
+# ---- Pre-load with a nice spinner ----
+with st.spinner("⚡ Loading data & training ML models (one-time)…"):
+    df = _load_data(str(DEMO_FILE))
+    # hash the data to invalidate the cache when data changes
+    df_hash = str(hash(str(df.shape) + str(df["Profit"].sum())))
+    results, pipes, (X_test, y_test) = _train_models(df_hash, df)
+
+st.success(f"✅ Ready — {len(df):,} rows · 4 models trained")
 
 
 # ============================================================
-# PAGES
+# TOP NAVBAR
 # ============================================================
 PAGES = {
     "home":      "🏠 Home",
@@ -191,86 +206,21 @@ PAGES = {
     "predict":   "💰 Predict",
 }
 
-if "page" not in st.session_state:
-    st.session_state.page = "home"
-
-
-# ============================================================
-# FILE UPLOADER  (OPTIONAL)
-# ============================================================
-with st.expander("📁 Upload your own dataset (optional) — leave empty to use General Sales demo",
-                 expanded=False):
-    uploaded = st.file_uploader(
-        "Upload any sales CSV (columns are auto-detected)",
-        type=["csv"],
-        label_visibility="collapsed",
-    )
-    st.caption("💡 Works with **any** sales dataset. "
-               "Required minimum: **Profit** OR **Sales** column. "
-               "All other columns are auto-mapped or synthesised.")
-
-# ---- Load Data ----
-if uploaded is not None:
-    df = get_data(uploaded)
-    st.success(f"✅ Loaded uploaded file — {len(df):,} rows")
-else:
-    demo_candidates = ["general_sales.csv", "Global Superstore.csv",
-                       "sales.csv", "data.csv", "sample_sales.csv"]
-    demo_path = next((p for p in demo_candidates if Path(p).exists()), None)
-
-    if demo_path is None:
-        st.info(
-            "📌 **General Sales mode** — no file uploaded.\n\n"
-            "Upload a CSV above **OR** place `general_sales.csv` "
-            "in the app folder to auto-load it."
-        )
-        st.stop()
-
-    df = get_data(demo_path)
-    st.success(f"✅ Auto-loaded **{demo_path}** — {len(df):,} rows")
-
-
-# ============================================================
-# TOP NAVBAR
-# ============================================================
-# ============================================================
-# TOP NAVBAR (pure Streamlit — clean, no empty buttons)
-# ============================================================
-st.markdown("""
-<style>
-/* Style the top navigation buttons */
-div[data-testid="stHorizontalBlock"] > div > div > div > button {
-    border-radius: 12px;
-    border: 1px solid #E8ECF4;
-    background: #FFFFFF;
-    color: #4A5568;
-    font-weight: 600;
-    font-size: 0.92rem;
-    padding: 0.7rem 0.4rem;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.04);
-    transition: all 0.25s ease;
-}
-div[data-testid="stHorizontalBlock"] > div > div > div > button:hover {
-    background: #EEF1F8;
-    border-color: #A29BFE;
-    color: #6C5CE7;
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(108,92,231,0.18);
-}
-</style>
-""", unsafe_allow_html=True)
-
 nav_cols = st.columns(len(PAGES))
 for i, (key, label) in enumerate(PAGES.items()):
     with nav_cols[i]:
-        # Active page = highlighted button
-        is_active = st.session_state.page == key
-        btn_label = f"**{label}**" if is_active else label
-        if st.button(btn_label, key=f"navbtn_{key}", use_container_width=True):
+        is_active = (st.session_state.page == key)
+        if st.button(
+            label,
+            key=f"navbtn_{key}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary",
+        ):
             st.session_state.page = key
             st.rerun()
 
 page = st.session_state.page
+
 
 # ============================================================
 # PAGE 1: HOME
@@ -310,7 +260,7 @@ if page == "home":
             unsafe_allow_html=True)
 
     st.markdown('<div class="section-title">👨‍🎓 Project Info</div>', unsafe_allow_html=True)
-    st.info("**Student:** (Shakeel Ahmed Code-778197)  •  **Course:** Machine Learning & Deep Learning  •  **Project:** Sales Analytics & Profit Prediction")
+    st.info("**Student:** (SHAKEEL AHMED CODE 778197)  •  **Course:** Machine Learning & Deep Learning  •  **Project:** Sales Analytics & Profit Prediction")
 
     st.markdown('<div class="section-title">🧭 Project Flow</div>', unsafe_allow_html=True)
     steps = [
@@ -563,9 +513,6 @@ elif page == "customer":
 elif page == "models":
     st.markdown('<div class="section-title">🤖 Model Evaluation</div>', unsafe_allow_html=True)
 
-    with st.spinner("Training models (Linear, DT, RF, GB)…"):
-        results, pipes, (X_test, y_test) = get_models(df)
-
     best = results.iloc[0]
     st.markdown(f"""
     <div class="hero" style="padding:1.6rem; margin-bottom:1.4rem;">
@@ -612,13 +559,13 @@ elif page == "models":
         | Metric | Meaning | Better when… |
         |---|---|---|
         | **MAE** | Average absolute error (in $) | Lower ↓ |
-        | **MSE** | Average squared error (penalises big errors) | Lower ↓ |
-        | **RMSE** | Square-root of MSE (same unit as $) | Lower ↓ |
-        | **R²** | % of variance explained by the model | Higher ↑ (max 1.0) |
-        | **Explained Variance** | How much variance is captured | Higher ↑ |
-        | **Max Error** | Worst-case prediction error | Lower ↓ |
+        | **MSE** | Average squared error | Lower ↓ |
+        | **RMSE** | Square-root of MSE | Lower ↓ |
+        | **R²** | % variance explained | Higher ↑ |
+        | **Explained Variance** | Variance captured | Higher ↑ |
+        | **Max Error** | Worst-case prediction | Lower ↓ |
         | **MAPE (%)** | Average % error | Lower ↓ |
-        | **Train R² vs Test R²** | If gap is large → overfitting | Gap close to 0 |
+        | **Train/Test R² gap** | Overfitting indicator | Close to 0 |
         """)
 
     st.markdown('<div class="section-title">📈 Metrics Visualised</div>',
@@ -648,10 +595,15 @@ elif page == "models":
     fig.update_layout(template="plotly_white")
     st.plotly_chart(fig, use_container_width=True)
 
-    r2_melt = results.melt(id_vars="Model",
-                           value_vars=["Train R2", "Test R2"],
-                           var_name="Set", value_name="R2")
-    fig = px.bar(r2_melt, x="Model", y="R2", color="Set", barmode="group",
+    # ---- FIXED: value_name changed from "R2" to "R2_Score" ----
+    r2_melt = results.melt(
+        id_vars="Model",
+        value_vars=["Train R2", "Test R2"],
+        var_name="Set",
+        value_name="R2_Score",          # ✅ naya naam (R2 already exists)
+    )
+    fig = px.bar(r2_melt, x="Model", y="R2_Score", color="Set",   # ✅ y bhi update
+                 barmode="group",
                  title="Train vs Test R²  (large gap = overfitting)")
     fig.update_layout(template="plotly_white")
     st.plotly_chart(fig, use_container_width=True)
@@ -683,21 +635,6 @@ elif page == "models":
             <div class="kpi-label">MAPE</div>
             <div class="kpi-value">{row['MAPE (%)']:.2f}%</div></div>""",
             unsafe_allow_html=True)
-
-    st.markdown(f"""
-    | Metric | Value |
-    |---|---|
-    | MAE (Mean Absolute Error) | **${row['MAE']:,.2f}** |
-    | MSE (Mean Squared Error) | **{row['MSE']:,.2f}** |
-    | RMSE (Root Mean Squared Error) | **${row['RMSE']:,.2f}** |
-    | R² Score | **{row['R2']:.4f}** |
-    | Explained Variance | **{row['Explained_Var']:.4f}** |
-    | Max Error (worst-case) | **${row['Max_Error']:,.2f}** |
-    | MAPE (Mean Absolute % Error) | **{row['MAPE (%)']:.2f}%** |
-    | Train R² | **{row['Train R2']:.4f}** |
-    | Test R² | **{row['Test R2']:.4f}** |
-    | Overfit Gap | **{row['Overfit Gap']:.4f}** |
-    """)
 
     pipe = pipes[selected]
     y_pred = pipe.predict(X_test)
@@ -743,8 +680,7 @@ elif page == "models":
                               yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info(f"📌 {selected} does not provide feature importance "
-                    f"(Linear model uses coefficients instead).")
+            st.info(f"📌 {selected} does not provide feature importance.")
     except Exception as e:
         st.info(f"Feature importance unavailable: {e}")
 
@@ -756,14 +692,6 @@ elif page == "predict":
     st.markdown('<div class="section-title">💰 Predict Order Profit</div>',
                 unsafe_allow_html=True)
     st.markdown("Enter order details to estimate **expected profit**.")
-
-    with st.spinner("Loading model…"):
-        try:
-            pipes = {n: md.load_model(n) for n in
-                     ["Linear_Regression", "Decision_Tree",
-                      "Random_Forest", "Gradient_Boosting"]}
-        except Exception:
-            results, pipes, _ = get_models(df)
 
     best_model_name = st.selectbox("Select model", list(pipes.keys()))
 
